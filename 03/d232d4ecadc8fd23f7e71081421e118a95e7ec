@@ -1,0 +1,33 @@
+src/kv_bench.cpp
+  s_cecebe8208950d::t_322cfd88930845 391-414
+  s_cecebe8208950d::t_a62c622ec4fc3a 3014-3015
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.2",
+  "base_commit_sha": "03d232d4ecadc8fd23f7e71081421e118a95e7ec",
+  "prompts": {},
+  "sessions": {
+    "s_cecebe8208950d": {
+      "agent_id": {
+        "tool": "trae",
+        "id": "6a97eb8b50ce98479f92be78",
+        "model": "glm-5.3-flash__dev"
+      },
+      "human_author": "rookieliuh <1422987046@qq.com>",
+      "custom_attributes": {
+        "edit_kind": "file_edit",
+        "operation_id": "6a99652250ce98479f92c470",
+        "tool_use_id": "6a99652250ce98479f92c470",
+        "tool_type": "agent",
+        "runtime_client": "trae-tob-git-ai",
+        "source_scene": "unknown",
+        "external_session_id": "6a97eb8b50ce98479f92be78",
+        "tool_id": "Edit",
+        "session_id": "6a97eb8b50ce98479f92be78",
+        "dedupe_key": "6a97eb8b50ce98479f92be78:6a99652250ce98479f92c470:afterEdit:af589fb6",
+        "client_type": "ide"
+      }
+    }
+  }
+}
