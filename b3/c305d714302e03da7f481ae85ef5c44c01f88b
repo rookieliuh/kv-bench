@@ -1,0 +1,38 @@
+src/kv_bench.cpp
+  h_5f22d269ed9be1 2924-2925
+  s_cecebe8208950d::t_bcd2f66c44f1eb 2908-2909,2918-2923
+  s_cecebe8208950d::t_1c34eb3bde7dd8 1565-1566
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.2",
+  "base_commit_sha": "b3c305d714302e03da7f481ae85ef5c44c01f88b",
+  "prompts": {},
+  "humans": {
+    "h_5f22d269ed9be1": {
+      "author": "rookieliuh <1422987046@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_cecebe8208950d": {
+      "agent_id": {
+        "tool": "trae",
+        "id": "6a97eb8b50ce98479f92be78",
+        "model": "glm-5.3-flash__dev"
+      },
+      "human_author": "rookieliuh <1422987046@qq.com>",
+      "custom_attributes": {
+        "tool_use_id": "6a99619050ce98479f92c3f1",
+        "display_model_name": "GLM-5.3-Flash",
+        "operation_id": "6a99619050ce98479f92c3f1",
+        "external_session_id": "6a97eb8b50ce98479f92be78",
+        "tool_name": "Edit",
+        "source_scene": "agent",
+        "runtime_client": "trae-tob-git-ai",
+        "session_id": "6a97eb8b50ce98479f92be78",
+        "client_type": "ide",
+        "edit_kind": "file_edit"
+      }
+    }
+  }
+}
