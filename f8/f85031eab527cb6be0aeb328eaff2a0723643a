@@ -1,0 +1,38 @@
+src/kv_bench.cpp
+  s_cecebe8208950d::t_a7c9ecfed7b8f8 2906-2914
+  s_cecebe8208950d::t_521af4e30b0f42 2763-2764
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.2",
+  "base_commit_sha": "f8f85031eab527cb6be0aeb328eaff2a0723643a",
+  "prompts": {},
+  "humans": {
+    "h_5f22d269ed9be1": {
+      "author": "rookieliuh <1422987046@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_cecebe8208950d": {
+      "agent_id": {
+        "tool": "trae",
+        "id": "6a97eb8b50ce98479f92be78",
+        "model": "glm-5.3-flash__dev"
+      },
+      "human_author": "rookieliuh <1422987046@qq.com>",
+      "custom_attributes": {
+        "session_id": "6a97eb8b50ce98479f92be78",
+        "dedupe_key": "6a97eb8b50ce98479f92be78:6a991b2450ce98479f92bfc8:afterEdit:af589fb6",
+        "runtime_client": "trae-tob-git-ai",
+        "edit_kind": "file_edit",
+        "client_type": "ide",
+        "operation_id": "6a991b2450ce98479f92bfc8",
+        "tool_type": "agent",
+        "external_session_id": "6a97eb8b50ce98479f92be78",
+        "tool_id": "Edit",
+        "tool_use_id": "6a991b2450ce98479f92bfc8",
+        "source_scene": "unknown"
+      }
+    }
+  }
+}
