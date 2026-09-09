@@ -3,6 +3,7 @@
  */
 #include "urma_manager.h"
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <sys/socket.h>
@@ -12,6 +13,10 @@
 #include "../clock.h"
 #include "urma_opcode.h"
 #include "urma_ubagg.h"
+
+/* 进程级 URMA 库引用计数：同一进程内多个 UrmaManager 实例共享一次
+ * urma_init/urma_uninit，解决 bidirectional 双线程冲突的问题 */
+static std::atomic<int> g_urma_refcount{0};
 
 namespace kv_bench {
 
@@ -197,10 +202,14 @@ int UrmaManager::GetEidIndex(urma_device_t *dev) {
 }
 
 bool UrmaManager::InitUrmaLib() {
+  if (g_urma_refcount.fetch_add(1) > 0) {
+    return true; /* 已有实例初始化过，仅增加引用计数 */
+  }
   urma_init_attr_t attr;
   (void)memset(&attr, 0, sizeof(attr));
   attr.uasid = 0;
   if (urma_init(&attr) != URMA_SUCCESS) {
+    g_urma_refcount.fetch_sub(1); /* 回滚引用计数 */
     fprintf(stderr, "Failed to urma_init\n");
     return false;
   }
@@ -262,7 +271,9 @@ void UrmaManager::Stop() {
     localSeg_.reset();
     buf_ = nullptr;
     bufLen_ = 0;
-    (void)urma_uninit();
+    if (g_urma_refcount.fetch_sub(1) == 1) {
+      (void)urma_uninit();
+    }
   }
 }
 
