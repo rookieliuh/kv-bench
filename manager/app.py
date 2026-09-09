@@ -584,7 +584,7 @@ class DeploymentManager:
     def create_task(self, payload: dict[str, Any]) -> TaskSpec:
         workers = {entry["name"]: Node(**entry) for entry in payload["workers"]}
         items = [BenchItem(**entry) for entry in payload["bench_items"]]
-        task = TaskSpec(payload.get("task_id", f"task-{uuid.uuid4().hex[:8]}"), workers, items, payload.get("options", {}))
+        task = TaskSpec(payload.get("task_id") or f"task-{uuid.uuid4().hex[:8]}", workers, items, payload.get("options", {}))
         with self._lock:
             if task.task_id in self.tasks:
                 raise ValueError("task already exists")

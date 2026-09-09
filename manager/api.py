@@ -103,7 +103,7 @@ def node_dict(node: Node) -> dict[str, Any]:
 
 def task_dict(task: Any) -> dict[str, Any]:
     data = asdict(task)
-    data["workers"] = {name: node_dict(node) for name, node in task.workers.items()}
+    data["workers"] = [node_dict(node) for node in task.workers.values()]
     return data
 
 
