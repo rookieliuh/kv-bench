@@ -767,12 +767,21 @@ class DeploymentManager:
         return False
 
     def _teardown_workers(self, task: TaskSpec, entries: list[tuple[str, int]]) -> None:
-        """杀掉任务 worker 进程并释放端口（尽力而为，不抛异常）。"""
+        """杀掉任务 worker 进程、清理日志、释放端口（尽力而为，不抛异常）。
+
+        pkill 后发 SIGCHLD 给 init 强制回收僵尸进程。"""
         for node_name, port in entries:
             node = task.workers.get(node_name)
             if node is not None:
                 try:
-                    self.executor.run(node, ["pkill", "-f", f"worker-port={port}"])
+                    self.executor.run(node, ["sh", "-c",
+                        f"pkill -f worker-port={port} 2>/dev/null; "
+                        f"sleep 0.2; kill -s CHLD 1 2>/dev/null"])
+                except Exception:
+                    pass
+                try:
+                    self.executor.run(node, ["rm", "-f",
+                        f"/var/log/kv-bench-worker-{task.task_id}.log"])
                 except Exception:
                     pass
             self.ports.release(port)
