@@ -1,0 +1,34 @@
+src/urma/urma_manager.cpp
+  s_e5c800a77237a9::t_1b894422f3e631 483-484
+manager/app.py
+  s_e5c800a77237a9::t_899ce2c301c759 770-772,777-784
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.2",
+  "base_commit_sha": "3d7d5da18591bbea6a58cf0f5bba819a2cc6ac87",
+  "prompts": {},
+  "sessions": {
+    "s_e5c800a77237a9": {
+      "agent_id": {
+        "tool": "trae",
+        "id": "6aa0bcbe38d925cbd4dbe199",
+        "model": "DeepSeek-V4-Flash__dev"
+      },
+      "human_author": "rookieliuh <1422987046@qq.com>",
+      "custom_attributes": {
+        "operation_id": "6aa24d3d38d925cbd4dbe592",
+        "tool_use_id": "6aa24d3d38d925cbd4dbe592",
+        "source_scene": "unknown",
+        "client_type": "ide",
+        "session_id": "6aa0bcbe38d925cbd4dbe199",
+        "tool_type": "agent",
+        "tool_id": "Edit",
+        "dedupe_key": "6aa0bcbe38d925cbd4dbe199:6aa24d3d38d925cbd4dbe592:afterEdit:bd633b8d",
+        "runtime_client": "trae-tob-git-ai",
+        "external_session_id": "6aa0bcbe38d925cbd4dbe199",
+        "edit_kind": "file_edit"
+      }
+    }
+  }
+}
