@@ -549,6 +549,9 @@ class DeploymentManager:
                 raise ValueError(f"unknown topology endpoint: {item.src}->{item.dst}")
             for index, (node, peer) in enumerate(((source, destination), (destination, source))):
                 active = item.type == "bidirectional" or (item.type == "forward" and index == 0) or (item.type == "reverse" and index == 1)
+                # 多对一：同一节点已有被动命令时跳过（服务端支持多客户端接入）
+                if not active and any("--no-interactive" in c for c in assignments[node.name]):
+                    continue
                 arguments = [node.binary]
                 if active:
                     arguments += [f"--peer-ip={peer.ip}", f"--direction={item.type}"]
