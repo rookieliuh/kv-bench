@@ -1,0 +1,32 @@
+manager/app.py
+  s_e5c800a77237a9::t_87aa7d07af7ea2 552-554
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.2",
+  "base_commit_sha": "0ab3ec986f2991ba37884cab705801b5bbe4214d",
+  "prompts": {},
+  "sessions": {
+    "s_e5c800a77237a9": {
+      "agent_id": {
+        "tool": "trae",
+        "id": "6aa0bcbe38d925cbd4dbe199",
+        "model": "DeepSeek-V4-Flash__dev"
+      },
+      "human_author": "rookieliuh <1422987046@qq.com>",
+      "custom_attributes": {
+        "external_session_id": "6aa0bcbe38d925cbd4dbe199",
+        "source_scene": "unknown",
+        "operation_id": "6aa25ad138d925cbd4dbe60f",
+        "tool_id": "Edit",
+        "client_type": "ide",
+        "dedupe_key": "6aa0bcbe38d925cbd4dbe199:6aa25ad138d925cbd4dbe60f:afterEdit:007e41bf",
+        "tool_type": "agent",
+        "session_id": "6aa0bcbe38d925cbd4dbe199",
+        "tool_use_id": "6aa25ad138d925cbd4dbe60f",
+        "runtime_client": "trae-tob-git-ai",
+        "edit_kind": "file_edit"
+      }
+    }
+  }
+}
