@@ -250,7 +250,7 @@ class RunArtifacts:
         collected: dict[str, str] = {}
         for name, node in task.workers.items():
             try:
-                content = executor.run(node, ["sh", "-c", f"cat {log_glob} 2>/dev/null | tail -n 500"])
+                content = executor.run(node, [f"cat {log_glob} 2>/dev/null | tail -n 500"])
                 suffix = "log"
             except Exception as error:
                 content = f"[log fetch failed: {error}]"
@@ -788,18 +788,21 @@ class DeploymentManager:
     def _teardown_workers(self, task: TaskSpec, entries: list[tuple[str, int]]) -> None:
         """杀掉任务 worker 进程、清理日志、释放端口（尽力而为，不抛异常）。
 
-        pkill 后发 SIGCHLD 给 init 强制回收僵尸进程。"""
+        三阶段清理：pkill (SIGTERM) → 等 0.5s 正常退出 → pkill -9 (SIGKILL) 兜底
+        → SIGCHLD 强制回收僵尸 → 清理日志。"""
         for node_name, port in entries:
             node = task.workers.get(node_name)
             if node is not None:
                 try:
-                    self.executor.run(node, ["sh", "-c",
+                    self.executor.run(node, [
                         f"pkill -f worker-port={port} 2>/dev/null; "
+                        f"sleep 0.5; "
+                        f"pkill -9 -f worker-port={port} 2>/dev/null; "
                         f"sleep 0.2; kill -s CHLD 1 2>/dev/null"])
                 except Exception:
                     pass
                 try:
-                    self.executor.run(node, ["sh", "-c",
+                    self.executor.run(node, [
                         f"rm -f /var/log/kv-bench-worker-{task.task_id}*.log"])
                 except Exception:
                     pass
