@@ -49,7 +49,6 @@
 #define DEFAULT_VALUE_SIZE (4UL * 1024 * 1024)
 #define MAX_JETTY_COUNT 200
 #define MAX_CLIENT_CNT 10
-#define MAX_PEER_CNT MAX_CLIENT_CNT  /* 客户端最多连接 peer 数 */
 #define POLL_SLEEP_NS 1000L /* 1us */
 #define DEFAULT_PORT 13857
 #define DATA_WINDOW_PER_THREAD                                                 \
@@ -136,9 +135,6 @@ typedef struct argument {
   bool fixed_offset;
   int timeout_ms;
   bool query_chips; /* 只查询 chip 路由选择（不初始化 URMA），打印后退出 */
-  /* 多 peer 支持（一对多打流） */
-  int peer_count;
-  char peer_ips[MAX_PEER_CNT][64];
 } argument_t;
 
 typedef struct context context_t;
@@ -180,11 +176,9 @@ typedef struct worker {
   uint32_t active_count;                  /* 在飞槽数 */
   uint32_t free_slots[KV_MAX_WR_SLOTS]; /* 空闲槽栈（发送 O(1) 取槽） */
   uint32_t free_count;                  /* 空闲槽数 */
-  uint64_t req_start[KV_MAX_CONCURRENCY]; /* 每在飞请求的开始时间（请求 id % N） */
+  uint64_t
+      req_start[KV_MAX_CONCURRENCY]; /* 每在飞请求的开始时间（请求 id % N） */
   uint64_t req_done[KV_MAX_CONCURRENCY]; /* 每在飞请求已完成组数 */
-  /* 多 peer 轮询（一对多场景）：当前 peer 索引和连接引用 */
-  int peer_id;
-  std::shared_ptr<kv_bench::UrmaConnection> peer_conn;
 } worker_t;
 
 typedef struct conn {
@@ -195,16 +189,10 @@ typedef struct conn {
   pthread_t tid;
 } conn_t;
 
-/* 多 peer 连接（一对多场景） */
-typedef struct peer_conn {
-  int fd;                                                       /* TCP 控制面 socket */
-  std::shared_ptr<kv_bench::UrmaConnection> conn; /* URMA 连接 */
-} peer_conn_t;
-
 struct context {
   argument_t args;
   kv_bench::UrmaManager *mgr; /* 管理层（单例/进程） */
-  std::shared_ptr<kv_bench::UrmaConnection> conn; /* 客户端单连接（主 peer） */
+  std::shared_ptr<kv_bench::UrmaConnection> conn; /* 客户端单连接 */
 
   void *va; /* 整个注册缓冲 */
   uint64_t buf_len;
@@ -219,10 +207,6 @@ struct context {
   /* 双设备模式：4 端口 manager 与连接 */
   kv_bench::UrmaManager *mgr_dual[4];
   std::shared_ptr<kv_bench::UrmaConnection> conn_dual[4];
-
-  /* 多 peer 连接（一对多场景） */
-  peer_conn_t peers[MAX_PEER_CNT];
-  int peer_count;
 
   /* 服务器 */
   int listen_fd;
@@ -765,7 +749,7 @@ static int client_do_write(context_t *ctx, worker_t *w, int src_a, int src_b,
                            int dst_chip) {
   const argument_t *args = &ctx->args;
   kv_bench::UrmaManager *mgr = ctx->mgr;
-  kv_bench::UrmaConnection &conn = *w->peer_conn;
+  kv_bench::UrmaConnection &conn = *ctx->conn;
   uint32_t size = (uint32_t)args->value_size;
   uint32_t wr_len = size;
   uint64_t off_a = w->off;
@@ -888,7 +872,7 @@ static int post_one_req(context_t *ctx, worker_t *w, uint32_t slot_idx,
                         uint64_t req_seq) {
   const argument_t *args = &ctx->args;
   kv_bench::UrmaManager *mgr = ctx->mgr;
-  kv_bench::UrmaConnection &conn = *w->peer_conn;
+  kv_bench::UrmaConnection &conn = *ctx->conn;
   /* local 每槽复用 8M；remote 每槽占 80M，避免在飞请求之间地址碰撞。 */
   uint64_t local_base_off = (uint64_t)slot_idx * KV_SEND_SIZE;
   uint64_t remote_base_off = (uint64_t)slot_idx * KV_REQ_BYTES;
@@ -969,11 +953,6 @@ static int client_write_pipeline(context_t *ctx, worker_t *w,
                                  uint64_t deadline) {
   const argument_t *args = &ctx->args;
   kv_bench::UrmaManager *mgr = ctx->mgr;
-  /* 初始化 peer 连接（多 peer 时由 worker 主循环保持轮转） */
-  if (w->peer_conn == nullptr && ctx->peer_count > 0) {
-    w->peer_id = w->local_index % ctx->peer_count;
-    w->peer_conn = ctx->peers[w->peer_id].conn;
-  }
   uint32_t concurrency =
       (args->concurrency >= 1 ? (uint32_t)args->concurrency : 1);
   if (concurrency > KV_MAX_CONCURRENCY)
@@ -1075,11 +1054,6 @@ static int client_write_pipeline(context_t *ctx, worker_t *w,
         break; /* 槽满（≤ 10，理论不会） */
       uint32_t slot = w->free_slots[--w->free_count];
       uint64_t postNsStart_ = now_ns();
-      /* 多 peer：每请求轮转一个目标 */
-      if (ctx->peer_count > 1) {
-        w->peer_id = (w->peer_id + 1) % ctx->peer_count;
-        w->peer_conn = ctx->peers[w->peer_id].conn;
-      }
       if (post_one_req(ctx, w, slot, req_seq) != 0) {
         w->free_slots[w->free_count++] = slot; /* 归还槽 */
         return -1;
@@ -1255,12 +1229,6 @@ static void *client_worker_main(void *arg) {
       }
     }
     return NULL;
-  }
-
-  /* get/mixed：初始化 peer 连接（多 peer 场景取第一个 peer） */
-  if (w->peer_conn == nullptr && ctx->peer_count > 0) {
-    w->peer_id = w->local_index % ctx->peer_count;
-    w->peer_conn = ctx->peers[w->peer_id].conn;
   }
 
   while (!w->stop && !ctx->fatal && now_ns() < deadline) {
@@ -1577,51 +1545,6 @@ static int client_connect_and_exchange(context_t *ctx, const argument_t *args) {
   return sockfd;
 }
 
-/* 连接到指定的 peer IP：TCP 握手 + URMA 交换，结果存入 out_conn，
- * 返回控制面 socket fd（失败返回 -1）。
- * 与 client_connect_and_exchange 共享 handshake 参数构造逻辑。 */
-static int client_connect_to_peer(context_t *ctx, const char *peer_ip,
-                                   unsigned int port,
-                                   std::shared_ptr<kv_bench::UrmaConnection>
-                                       &out_conn) {
-  struct sockaddr_in addr;
-  int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-  if (sockfd < 0) {
-    fprintf(stderr, "Failed to create socket: %d\n", errno);
-    return -1;
-  }
-  addr.sin_family = AF_INET;
-  addr.sin_port = htons(port);
-  addr.sin_addr.s_addr = inet_addr(peer_ip);
-  if (connect_with_retry(sockfd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
-    fprintf(stderr,
-            "Failed to connect peer %s:%u after %ums (retried on "
-            "refused), errno=%d (%s)\n",
-            peer_ip, port, CONNECT_RETRY_TOTAL_MS, errno, strerror(errno));
-    close(sockfd);
-    return -1;
-  }
-
-  kv_bench::HandshakeParams params;
-  params.threads = ctx->args.threads;
-  params.opCode = (uint32_t)ctx->args.op;
-  params.valueSize = (uint32_t)ctx->args.value_size;
-  params.transMode = ctx->args.trans_mode;
-  params.dstChip = INVALID_CHIP;
-  int dst_chip = first_dst_chip(&ctx->args);
-  if (dst_chip > 0) {
-    params.dstChip = (uint32_t)dst_chip;
-  }
-  if (!ctx->mgr->ExchangeAsClient(sockfd, params, out_conn,
-                                  ctx->args.import_rtp)) {
-    fprintf(stderr, "Failed to exchange URMA info with peer %s\n", peer_ip);
-    close(sockfd);
-    return -1;
-  }
-  printf("peer %s: remote dst_chip=%u\n", peer_ip, out_conn->peer.dstChip);
-  return sockfd;
-}
-
 static int create_workers(context_t *ctx, uint32_t count) {
   ctx->workers = new worker_t[count](); /* worker_t 含 shared_ptr，须用 new */
   if (ctx->workers == NULL)
@@ -1678,15 +1601,6 @@ static void destroy_context(context_t *ctx, int sockfd) {
   /* 先释放对端连接（import 出的 target jetty/segment 需 urma_unimport_*），
    * 必须在 mgr->Stop()（内部 urma_uninit）之前，否则撞已卸载的库 */
   ctx->conn.reset();
-  /* 清理多 peer 连接（跳过已由 sockfd 关闭的 fd） */
-  for (int pi = 0; pi < ctx->peer_count; pi++) {
-    ctx->peers[pi].conn.reset();
-    if (ctx->peers[pi].fd >= 0 && ctx->peers[pi].fd != sockfd) {
-      close(ctx->peers[pi].fd);
-      ctx->peers[pi].fd = -1;
-    }
-  }
-  ctx->peer_count = 0;
   if (ctx->mgr != nullptr) {
     ctx->mgr->Stop();
     delete ctx->mgr;
@@ -2099,25 +2013,6 @@ static int run_client(const argument_t *args) {
     destroy_context(ctx, sockfd);
     return -1;
   }
-  /* 一对多：注册第一个 peer，再连接其余 peer */
-  ctx->peers[0].fd = sockfd;
-  ctx->peers[0].conn = ctx->conn;
-  ctx->peer_count = 1; /* 至少有一个 peer（向后兼容单 server 模式） */
-  for (int pi = 1; pi < args->peer_count; pi++) {
-    std::shared_ptr<kv_bench::UrmaConnection> pconn;
-    int pfd = client_connect_to_peer(ctx, args->peer_ips[pi],
-                                     args->server_port, pconn);
-    if (pfd < 0) {
-      destroy_context(ctx, sockfd);
-      return -1;
-    }
-    ctx->peers[pi].fd = pfd;
-    ctx->peers[pi].conn = pconn;
-    ctx->peer_count++;
-  }
-  if (ctx->peer_count > 1) {
-    printf("one-to-many mode: %d peers\n", ctx->peer_count);
-  }
   if (create_workers(ctx, args->threads) != 0) {
     destroy_context(ctx, sockfd);
     return -1;
@@ -2147,11 +2042,9 @@ static int run_client(const argument_t *args) {
   if (ctx->fatal) {
     fprintf(stderr,
             "\n==== abort: first round error, run stopped early ====\n");
-    /* 通知所有 peer 结束（EOF 语义） */
+    /* 通知服务器结束（EOF 语义） */
     char sync_msg = 'E';
-    for (int pi = 0; pi < ctx->peer_count; pi++) {
-      (void)write(ctx->peers[pi].fd, &sync_msg, 1);
-    }
+    (void)write(sockfd, &sync_msg, 1);
     close(sockfd);
     sockfd = -1;
     destroy_context(ctx, sockfd);
@@ -2160,13 +2053,9 @@ static int run_client(const argument_t *args) {
 
   print_client_summary(ctx, (double)(t1 - t0) / 1e9);
 
-  /* 通知所有 peer 结束（EOF 语义） */
-  {
-    char sync_msg = 'E';
-    for (int pi = 0; pi < ctx->peer_count; pi++) {
-      (void)write(ctx->peers[pi].fd, &sync_msg, 1);
-    }
-  }
+  /* 通知服务器结束（EOF 语义） */
+  char sync_msg = 'E';
+  (void)write(sockfd, &sync_msg, 1);
   close(sockfd);
   sockfd = -1;
 
@@ -2663,7 +2552,7 @@ static void usage(void) {
   printf("      --dev-name2 <dev>      second physical device name (dual-dev "
          "mode)\n");
   printf("      --op <op>              write | get | mixed (default write)\n");
-  printf("      --peer-ip <ip>         peer address (can be repeated for one-to-many)\n");
+  printf("      --peer-ip <ip>         peer address for worker data plane\n");
   printf("      --direction <type>     forward | reverse | bidirectional\n");
   printf("      --no-interactive       keep passive worker running without stdin\n");
   printf("      --worker               run the in-process worker HTTP API\n");
@@ -2901,19 +2790,7 @@ static int parse_arguments(int argc, char *argv[], argument_t *args) {
       args->dev_name2 = strdup(optarg);
       break;
     case 1041:
-      if (args->peer_count >= MAX_PEER_CNT) {
-        fprintf(stderr, "Too many --peer-ip (max %d)\n", MAX_PEER_CNT);
-        return -1;
-      }
-      /* 第一个 --peer-ip 同时作为 server_ip（向后兼容 + run_client 主连接） */
-      if (args->server_ip == NULL) {
-        args->server_ip = strdup(optarg);
-      }
-      strncpy(args->peer_ips[args->peer_count], optarg,
-              sizeof(args->peer_ips[0]) - 1);
-      args->peer_ips[args->peer_count]
-          [sizeof(args->peer_ips[0]) - 1] = '\0';
-      args->peer_count++;
+      args->server_ip = strdup(optarg);
       break;
     case 1042:
       if (strcmp(optarg, "forward") == 0)

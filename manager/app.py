@@ -542,10 +542,6 @@ class DeploymentManager:
     def build_assignments(self, task: TaskSpec) -> dict[str, list[str]]:
         assignments: dict[str, list[str]] = {name: [] for name in task.workers}
         common = {"op": "write", "threads": 1, "duration": 10, **task.options}
-        # 第一遍：收集每个节点上的 active peer IP（去重）和 passive 标记
-        active_peers: dict[str, list[str]] = {}
-        passive_done: set[str] = set()
-        active_dir: dict[str, str] = {}  # node_name -> direction string
         for item in task.bench_items:
             source = self._resolve_worker(task, item.src)
             destination = self._resolve_worker(task, item.dst)
@@ -553,51 +549,17 @@ class DeploymentManager:
                 raise ValueError(f"unknown topology endpoint: {item.src}->{item.dst}")
             for index, (node, peer) in enumerate(((source, destination), (destination, source))):
                 active = item.type == "bidirectional" or (item.type == "forward" and index == 0) or (item.type == "reverse" and index == 1)
+                # 多对一：同一节点已有被动命令时跳过（服务端支持多客户端接入）
+                if not active and any("--no-interactive" in c for c in assignments[node.name]):
+                    continue
+                arguments = [node.binary]
                 if active:
-                    active_peers.setdefault(node.name, [])
-                    if peer.ip not in active_peers[node.name]:
-                        active_peers[node.name].append(peer.ip)
-                        if node.name not in active_dir:
-                            active_dir[node.name] = item.type
+                    arguments += [f"--peer-ip={peer.ip}", f"--direction={item.type}"]
                 else:
-                    # 多对一：同一节点已有被动命令时跳过（服务端支持多客户端接入）
-                    if node.name not in passive_done:
-                        passive_done.add(node.name)
-        # 第二遍：构建命令（每个节点最多一个 active 命令 + 一个 passive 命令）
-        for node_name in task.workers:
-            node = task.workers[node_name]
-            # Active 命令（合并多个 --peer-ip）
-            if node_name in active_peers:
-                args_list = [node.binary]
-                for peer_ip in active_peers[node_name]:
-                    args_list += [f"--peer-ip={peer_ip}"]
-                args_list += [f"--direction={active_dir[node_name]}"]
+                    arguments += [f"--direction={item.type}", "--no-interactive"]
                 for key, value in common.items():
-                    args_list.extend(self._format_option(key, value))
-                assignments[node_name].append(" ".join(shlex.quote(str(v)) for v in args_list))
-            # Passive 命令
-            if node_name in passive_done:
-                # 从 bench_items 中找第一个使该节点成为 passive 的 direction
-                direction = "forward"
-                for item in task.bench_items:
-                    source = self._resolve_worker(task, item.src)
-                    destination = self._resolve_worker(task, item.dst)
-                    if source is None or destination is None:
-                        continue
-                    for index, (n, _) in enumerate(((source, destination), (destination, source))):
-                        if n.name != node_name:
-                            continue
-                        active = item.type == "bidirectional" or (item.type == "forward" and index == 0) or (item.type == "reverse" and index == 1)
-                        if not active:
-                            direction = item.type
-                            break
-                    else:
-                        continue
-                    break
-                args_list = [node.binary, f"--direction={direction}", "--no-interactive"]
-                for key, value in common.items():
-                    args_list.extend(self._format_option(key, value))
-                assignments[node_name].append(" ".join(shlex.quote(str(v)) for v in args_list))
+                    arguments.extend(self._format_option(key, value))
+                assignments[node.name].append(" ".join(shlex.quote(str(value)) for value in arguments))
         return assignments
 
     @staticmethod
