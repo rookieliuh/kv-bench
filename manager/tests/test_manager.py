@@ -138,7 +138,7 @@ class ManagerTests(unittest.TestCase):
             "bench_items": [{"src": "a", "dst": "b", "type": "forward"}],
         })
         manager.start_task("p1")
-        self.assertEqual(task1.worker_ports, {"a": 18082, "b": 18083})
+        self.assertEqual(task1.worker_ports, {"a": [18082], "b": [18083]})
         # 第二个任务端口继续错开
         task2 = manager.create_task({
             "task_id": "p2",
@@ -146,7 +146,7 @@ class ManagerTests(unittest.TestCase):
             "bench_items": [{"src": "a", "dst": "b", "type": "forward"}],
         })
         manager.start_task("p2")
-        self.assertEqual(task2.worker_ports, {"a": 18084, "b": 18085})
+        self.assertEqual(task2.worker_ports, {"a": [18084], "b": [18085]})
         # 停止 p1 后端口回收，p3 复用 18082/18083
         manager.stop_task("p1")
         task3 = manager.create_task({
@@ -155,9 +155,10 @@ class ManagerTests(unittest.TestCase):
             "bench_items": [{"src": "a", "dst": "b", "type": "forward"}],
         })
         manager.start_task("p3")
-        self.assertEqual(task3.worker_ports, {"a": 18082, "b": 18083})
-        # 停止时对每个节点执行 pkill 杀 worker
-        pkills = [call for call in executor.calls if call[1] and call[1][0] == "pkill"]
+        self.assertEqual(task3.worker_ports, {"a": [18082], "b": [18083]})
+        # 停止时对每个节点执行 sh -c "pkill ..." 杀 worker
+        pkills = [call for call in executor.calls if call[1] and call[1][0] == "sh"
+                  and "pkill" in " ".join(call[1])]
         self.assertEqual(len(pkills), 2)  # p1 的两个节点
 
     def test_task_restart_after_stop(self):
@@ -174,7 +175,7 @@ class ManagerTests(unittest.TestCase):
         # 停止后可再次执行，端口重新分配
         manager.start_task("r1")
         self.assertEqual(manager.tasks["r1"].state, "running")
-        self.assertEqual(manager.tasks["r1"].worker_ports, {"a": 18082, "b": 18083})
+        self.assertEqual(manager.tasks["r1"].worker_ports, {"a": [18082], "b": [18083]})
 
     def test_task_update_and_delete(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -329,7 +330,8 @@ class ManagerTests(unittest.TestCase):
         self.assertEqual(manager2.tasks["t"].state, "queued")
         self.assertEqual(manager2.tasks["t"].worker_ports, {})
         self.assertEqual(manager2.ports.used_ports(), [])
-        pkills = [call for call in executor2.calls if call[1] and call[1][0] == "pkill"]
+        pkills = [call for call in executor2.calls if call[1] and call[1][0] == "sh"
+                  and "pkill" in " ".join(call[1])]
         self.assertEqual(len(pkills), 2)  # a、b 都已拉起，全部回滚杀掉
 
     def test_node_store_persists_registered_nodes(self):

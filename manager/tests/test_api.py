@@ -212,7 +212,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(start.status_code, 200)
         self.assertEqual(start.json()["state"], "running")
         self.assertEqual(len(start.json()["commands"]), 2)
-        self.assertEqual(start.json()["worker_ports"], {"a": 18082, "b": 18083})
+        self.assertEqual(start.json()["worker_ports"], {"a": [18082], "b": [18083]})
 
         result = self.client.get("/v1/tasks/t1/result")
         self.assertEqual(result.status_code, 200)
@@ -236,7 +236,7 @@ class ApiTests(unittest.TestCase):
         restart = self.client.post("/v1/tasks/t1/start")
         self.assertEqual(restart.status_code, 200)
         self.assertEqual(restart.json()["state"], "running")
-        self.assertEqual(restart.json()["worker_ports"], {"a": 18082, "b": 18083})
+        self.assertEqual(restart.json()["worker_ports"], {"a": [18082], "b": [18083]})
 
     def test_task_update_and_delete_endpoints(self):
         self.client.post("/v1/tasks", json={

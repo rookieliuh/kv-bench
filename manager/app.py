@@ -235,16 +235,16 @@ class RunArtifacts:
     def fetch_logs(self, executor: Executor, task: TaskSpec) -> dict[str, str]:
         """SSH tail 各 worker 的 kv-bench 日志到 logs/{worker}.log（失败写 .error）。
 
-        任务专属 worker 的日志文件为 /var/log/kv-bench-worker-{task_id}.log。
+        任务专属 worker 的日志文件为 /var/log/kv-bench-worker-{task_id}-{port}.log。
         """
         directory = self._ensure(task.task_id)
         logs_dir = os.path.join(directory, "logs")
         os.makedirs(logs_dir, exist_ok=True)
-        log_path = f"/var/log/kv-bench-worker-{task.task_id}.log"
+        log_glob = f"/var/log/kv-bench-worker-{task.task_id}-*.log"
         collected: dict[str, str] = {}
         for name, node in task.workers.items():
             try:
-                content = executor.run(node, ["tail", "-n", "500", log_path])
+                content = executor.run(node, ["sh", "-c", f"cat {log_glob} 2>/dev/null | tail -n 500"])
                 suffix = "log"
             except Exception as error:
                 content = f"[log fetch failed: {error}]"
@@ -300,9 +300,9 @@ class TaskSpec:
     options: dict[str, Any] = field(default_factory=dict)
     state: str = "queued"
     result: dict[str, Any] = field(default_factory=dict)
-    # 任务专属 worker 端口（node -> port）；任务启动时分配、停止时回收，
+    # 任务专属 worker 端口（node -> [port, ...]）；支持单节点多 worker
     # 持久化到 tasks.json，重启后可继续停止/收集结果
-    worker_ports: dict[str, int] = field(default_factory=dict)
+    worker_ports: dict[str, list[int]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -484,8 +484,9 @@ class DeploymentManager:
         if task_store is not None:  # 恢复已持久化的任务与其端口占用
             for task in task_store.values():
                 self.tasks[task.task_id] = task
-                for port in task.worker_ports.values():
-                    self.ports.reserve(task.task_id, port)
+                for port_list in task.worker_ports.values():
+                    for port in port_list:
+                        self.ports.reserve(task.task_id, port)
 
     def _event(self, task_id: str, message: str) -> None:
         if self.artifacts is not None:
@@ -542,6 +543,8 @@ class DeploymentManager:
     def build_assignments(self, task: TaskSpec) -> dict[str, list[str]]:
         assignments: dict[str, list[str]] = {name: [] for name in task.workers}
         common = {"op": "write", "threads": 1, "duration": 10, **task.options}
+        # 多对一：同一节点已有被动命令时跳过（服务端支持多客户端接入）
+        passive_done: set[str] = set()
         for item in task.bench_items:
             source = self._resolve_worker(task, item.src)
             destination = self._resolve_worker(task, item.dst)
@@ -553,6 +556,10 @@ class DeploymentManager:
                 if active:
                     arguments += [f"--peer-ip={peer.ip}", f"--direction={item.type}"]
                 else:
+                    # 多对一去重：同一目标节点只起一个 server
+                    if node.name in passive_done:
+                        continue
+                    passive_done.add(node.name)
                     arguments += [f"--direction={item.type}", "--no-interactive"]
                 for key, value in common.items():
                     arguments.extend(self._format_option(key, value))
@@ -613,12 +620,15 @@ class DeploymentManager:
         assignments = self.build_assignments(task)
         started: list[tuple[str, int]] = []
         try:
-            # 1) 所有节点拉起任务专属 worker
-            for node_name in assignments:
+            # 1) 所有节点拉起任务专属 worker（支持单节点多 worker：每个命令一个）
+            for node_name, cmds in assignments.items():
                 node = task.workers[node_name]
-                port = self._spawn_worker(task, node)
-                task.worker_ports[node_name] = port
-                started.append((node_name, port))
+                port_list = []
+                for _ in cmds:
+                    port = self._spawn_worker(task, node)
+                    port_list.append(port)
+                    started.append((node_name, port))
+                task.worker_ports[node_name] = port_list
             # 2) 分类：含 --peer-ip 的是主动端(client)，否则是被动端(server)
             passive = [n for n, cmds in assignments.items() if any("--peer-ip" not in c for c in cmds)]
             active = [n for n, cmds in assignments.items() if any("--peer-ip" in c for c in cmds)]
@@ -651,9 +661,11 @@ class DeploymentManager:
         if self.worker_client is None:
             return
         node = task.workers[node_name]
-        for command in commands:
+        ports = task.worker_ports.get(node_name, [])
+        for idx, command in enumerate(commands):
+            port = ports[idx] if idx < len(ports) else None
             self.worker_client.start(node, task.task_id, shlex.split(command),
-                                     port=task.worker_ports[node_name])
+                                     port=port)
 
     @staticmethod
     def _task_server_port(task: TaskSpec) -> int:
@@ -703,7 +715,7 @@ class DeploymentManager:
             task = self.tasks.pop(task_id, None)
             if task is None:
                 raise KeyError(task_id)
-        self._teardown_workers(task, list(task.worker_ports.items()))
+        self._teardown_workers(task, [(name, p) for name, plist in task.worker_ports.items() for p in plist])
         if self.task_store is not None:
             self.task_store.remove(task_id)
         if self.artifacts is not None:
@@ -718,11 +730,12 @@ class DeploymentManager:
             ports = dict(task.worker_ports)
         if self.worker_client is not None:
             for node in task.workers.values():
-                try:
-                    self.worker_client.stop(node, task.task_id, port=ports.get(node.name))
-                except Exception:
-                    pass  # worker 可能已不在
-        self._teardown_workers(task, list(ports.items()))
+                for port in ports.get(node.name, []):
+                    try:
+                        self.worker_client.stop(node, task.task_id, port=port)
+                    except Exception:
+                        pass  # worker 可能已不在
+        self._teardown_workers(task, [(name, p) for name, plist in ports.items() for p in plist])
         with self._lock:
             task.state = "stopped"
         self._persist_task(task, "stopped")
@@ -731,7 +744,7 @@ class DeploymentManager:
         """分配端口 -> ssh 拉起该任务的 worker -> 轮询 /v1/health；失败换下一个端口。"""
         for _ in range(self.port_attempts):
             port = self.ports.allocate(task.task_id)
-            log_path = f"/var/log/kv-bench-worker-{task.task_id}.log"
+            log_path = f"/var/log/kv-bench-worker-{task.task_id}-{port}.log"
             # 整行命令作为单个参数传给 ssh（远端 shell 原样执行），</dev/null 防挂住
             start_cmd = (
                 f"nohup {shlex.quote(node.binary)} --worker --worker-port={port} "
@@ -780,8 +793,8 @@ class DeploymentManager:
                 except Exception:
                     pass
                 try:
-                    self.executor.run(node, ["rm", "-f",
-                        f"/var/log/kv-bench-worker-{task.task_id}.log"])
+                    self.executor.run(node, ["sh", "-c",
+                        f"rm -f /var/log/kv-bench-worker-{task.task_id}*.log"])
                 except Exception:
                     pass
             self.ports.release(port)
@@ -796,11 +809,19 @@ class DeploymentManager:
         workers: dict[str, Any] = {}
         for name, node in task.workers.items():
             if self.worker_client is not None:
-                try:
-                    workers[name] = self.worker_client.result(
-                        node, task_id, port=ports.get(name))
-                except Exception as error:  # worker may still be starting
-                    workers[name] = {"state": "unreachable", "error": str(error)}
+                port_list = ports.get(name) or [None]  # None = 默认端口（回退用）
+                merged = None
+                for port in port_list:
+                    try:
+                        r = self.worker_client.result(node, task_id, port=port)
+                    except Exception as error:
+                        r = {"state": "unreachable", "error": str(error)}
+                    if merged is None:
+                        merged = r
+                    else:
+                        for key in ("ops", "bytes", "errors"):
+                            merged[key] = int(merged.get(key, 0)) + int(r.get(key, 0))
+                workers[name] = merged or {"state": "unreachable"}
         with self._lock:
             # 任务停止后 worker 已被回收：返回上次收集的结果，避免显示全零
             any_reachable = any(w.get("state") != "unreachable" for w in workers.values())
