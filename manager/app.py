@@ -107,6 +107,12 @@ class TaskStore:
             return
         with open(self.path, encoding="utf-8") as stream:
             for entry in json.load(stream):
+                raw_ports = entry.get("worker_ports", {})
+                # 兼容旧格式：int → [int]
+                worker_ports = {
+                    name: [val] if isinstance(val, int) else val
+                    for name, val in raw_ports.items()
+                }
                 task = TaskSpec(
                     task_id=entry["task_id"],
                     workers={name: Node(**worker) for name, worker in entry["workers"].items()},
@@ -114,7 +120,7 @@ class TaskStore:
                     options=entry.get("options", {}),
                     state=entry.get("state", "queued"),
                     result=entry.get("result", {}),
-                    worker_ports=entry.get("worker_ports", {}),
+                    worker_ports=worker_ports,
                 )
                 self._tasks[task.task_id] = task
 
