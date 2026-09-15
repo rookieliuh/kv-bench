@@ -1989,12 +1989,11 @@ static int run_client(const argument_t *args) {
   ctx->mgr->SetPollCpu(args->poll_cpu >= 0 ? args->poll_cpu
                                            : auto_poll_cpu(args, true));
 
-  /* jetty 池 ≥ max(线程数, write 在飞请求 × 10 个 8M send) */
+  /* jetty 池 ≥ threads × concurrency × 10（每线程每在飞请求各占 10 条 jetty） */
   uint32_t min_lanes = args->threads;
   if (args->op == OP_WRITE) {
-    /* 池 ≥ 在飞请求 × 10（每请求 10 个 8M send 各占一条 jetty） */
     uint32_t reqs = (args->concurrency >= 1) ? (uint32_t)args->concurrency : 1;
-    uint32_t pipe = reqs * KV_SENDS_PER_REQ;
+    uint32_t pipe = args->threads * reqs * KV_SENDS_PER_REQ;
     if (pipe > min_lanes)
       min_lanes = pipe;
   }
